@@ -36,7 +36,7 @@ class HistoryController extends Controller
             'file',
             file_get_contents($file->getRealPath()),
             $filename
-        )->post('http://127.0.0.1:5000/predict-pcap'); // ✅ Updated endpoint
+        )->post('cyber-vision-ai-production.up.railway.app/predict-pcap'); // ✅ Updated endpoint
 
       if ($response->successful()) {
 
