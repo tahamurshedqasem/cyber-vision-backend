@@ -14,7 +14,8 @@ class History extends Model
         'file_name',
         'status',
         'threats',
-        'report'
+        'report',
+        'confidence'
     ];
 
     protected $casts = [
