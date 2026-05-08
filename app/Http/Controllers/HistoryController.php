@@ -9,78 +9,98 @@ use Illuminate\Support\Facades\Http;
 class HistoryController extends Controller
 {
     /**
-     * رفع ملف PCAP وتحليله عبر Flask API
+     * Upload and analyze PCAP file using Flask AI API
      */
     public function upload(Request $request)
-{
-    $request->validate([
-        'file' => 'required|file|mimes:pcap'
-    ]);
+    {
+        $request->validate([
+            'file' => 'required|file|mimes:pcap'
+        ]);
 
-    $file = $request->file('file');
-    $filename = time() . '_' . $file->getClientOriginalName();
-    $path = $file->storeAs('pcaps', $filename, 'public');
+        $file = $request->file('file');
 
-    // Create initial history record
-    $history = History::create([
-        'user_id' => $request->user()->id,
-        'file_name' => $filename,
-        'status' => 'Processing',
-        'threats' => 0
-    ]);
+        $filename = time() . '_' . $file->getClientOriginalName();
 
-    try {
+        $path = $file->storeAs('pcaps', $filename, 'public');
 
-        // Send file to Flask API
-        $response = Http::attach(
-            'file',
-            file_get_contents($file->getRealPath()),
-            $filename
-        )->post('https://cyber-vision-ai-production.up.railway.app/predict-pcap'); // ✅ Updated endpoint
+        // Create initial history record
+        $history = History::create([
+            'user_id' => $request->user()->id,
+            'file_name' => $filename,
+            'status' => 'Processing',
+            'threats' => 0,
+            'confidence' => 0
+        ]);
 
-      if ($response->successful()) {
+        try {
 
-    $data = $response->json();
+            // Send file to Flask API
+            $response = Http::attach(
+                'file',
+                file_get_contents($file->getRealPath()),
+                $filename
+            )->post('https://cyber-vision-ai-production.up.railway.app/predict-pcap');
 
-    $prediction = $data['final_decision'] ?? 'Unknown';
+            if ($response->successful()) {
 
-    $confidence = max([
-        $data['models_results']['svm']['confidence'] ?? 0,
-        $data['models_results']['xgb']['confidence'] ?? 0
-    ]);
+                $data = $response->json();
 
-    // Update history
-    $history->status = $prediction;
-    $history->confidence = $confidence;
-    $history->report = json_encode($data);
-    $history->threats = ($prediction === "Attack") ? 1 : 0;
-    $history->save();
+                // Read Flask response
+                $prediction = $data['prediction'] ?? 'Unknown';
 
-    return response()->json([
-        'message' => 'File analyzed successfully',
-        'prediction' => $prediction,
-        'confidence' => $confidence,
-        'history' => $history
-    ]);
-}
-        return response()->json([
-            'message' => 'Error from Flask API',
-            'error' => $response->body()
-        ], 500);
+                $confidence = $data['confidence'] ?? 0;
 
-    } catch (\Exception $e) {
+                $features = $data['extracted_features'] ?? [];
 
-        $history->status = 'Error';
-        $history->save();
+                // Determine threats count
+                $threats = ($prediction === "Attack") ? 1 : 0;
 
-        return response()->json([
-            'message' => 'Flask API unreachable',
-            'error' => $e->getMessage()
-        ], 500);
+                // Update history
+                $history->status = $prediction;
+                $history->confidence = $confidence;
+                $history->threats = $threats;
+
+                // Save full report
+                $history->report = json_encode([
+                    'prediction' => $prediction,
+                    'confidence' => $confidence,
+                    'features' => $features
+                ]);
+
+                $history->save();
+
+                return response()->json([
+                    'message' => 'File analyzed successfully',
+                    'prediction' => $prediction,
+                    'confidence' => $confidence,
+                    'features' => $features,
+                    'history' => $history
+                ]);
+            }
+
+            // Flask returned error
+            $history->status = 'Error';
+            $history->save();
+
+            return response()->json([
+                'message' => 'Error from Flask API',
+                'error' => $response->body()
+            ], 500);
+
+        } catch (\Exception $e) {
+
+            $history->status = 'Error';
+            $history->save();
+
+            return response()->json([
+                'message' => 'Flask API unreachable',
+                'error' => $e->getMessage()
+            ], 500);
+        }
     }
-}
+
     /**
-     * جلب كل الملفات التي رفعها المستخدم
+     * Get all uploaded files for authenticated user
      */
     public function index(Request $request)
     {
@@ -90,11 +110,13 @@ class HistoryController extends Controller
     }
 
     /**
-     * جلب ملف محدد بالتفاصيل
+     * Get single history record
      */
     public function show($id, Request $request)
     {
-        $history = History::where('user_id', $request->user()->id)->findOrFail($id);
+        $history = History::where('user_id', $request->user()->id)
+            ->findOrFail($id);
+
         return response()->json($history);
     }
 }
